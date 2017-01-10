@@ -1,22 +1,36 @@
-from concurrent.futures import ThreadPoolExecutor
-from fake_useragent import UserAgent
 import requests
-import re
+import sys
+import time
 from bs4 import BeautifulSoup
 
 SCHEDULE_URL = 'http://www.afisha.ru/msk/schedule_cinema/'
-KINOPOISK_URL = 'https://plus.kinopoisk.ru/search/films/'
-PROXY_LIST_URL = 'http://www.ip-adress.com/proxy_list/'
-proxy = 'http://www.google.ie/gwt/x?u='
+KINOPOISK_URL = 'https://www.kinopoisk.ru/index.php'
+TIMEOUT = 13
+TOP = 20
 
 
-def get_random_proxy_url():
-    ua = UserAgent()
-    headers = {'referer': 'https://www.google.co.in/', 'User-Agent': ua.random, 'connection': 'close'}
-    request = requests.get("http://www.ip-adress.com/proxy_list/", headers=headers)
-    pattern = re.compile('.*<td>(.*)</td>.*<td>Elite</td>.*', re.DOTALL)
-    matched = re.search(pattern, str(request.content))
-    return matched.group(1)
+def update_progress(progress):
+    bar_length = 10 # Modify this to change the length of the progress bar
+    status = ''
+    if isinstance(progress, int):
+        progress = float(progress)
+    if not isinstance(progress, float):
+        progress = 0
+        status = 'error: progress var must be float\r\n'
+    if progress < 0:
+        progress = 0
+        status = 'Halt...\r\n'
+    if progress >= 1:
+        progress = 1
+        status = 'Done...\r\n'
+    block = int(round(bar_length*progress))
+    text = '\rPercent: [{}] {}% {}'.format('#'*block + '#'*(bar_length-block), progress*100, status)
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def calculate_progress():
+    pass
 
 
 def fetch_afisha_page():
@@ -42,78 +56,59 @@ def parse_afisha_list(raw_html):
 
 
 def fetch_search_page(movie_title):
-    # proxy = get_random_proxy_url()
-    ua = UserAgent()
-    headers = {
-        'referer': 'https://www.google.co.in/',
-        'connection': 'close',
-        'User-Agent': ua.random
+    params = {
+        'first': 'yes',
+        'what': None,
+        'kp_query': movie_title,
     }
-    params = {'text': movie_title}
-    request = requests.get('{}{}'.format(proxy, KINOPOISK_URL), params=params, headers=headers, timeout=15)
+    request = requests.get(KINOPOISK_URL, params=params, timeout=15)
     return request.content
 
 
-def fetch_movie_url(search_page):
+def fetch_movie_data(search_page):
     if not search_page:
-        return None
-    search_page_soup = BeautifulSoup(search_page, 'html.parser')
-    if search_page_soup.find(attrs={'class': 'search-empty'}):
-        return None
-    movie_url_tag = search_page_soup.find(attrs={'class': 'link film-snippet__media-content'})
-    return movie_url_tag.get('href')
-
-
-def fetch_movie_page(movie_url):
-    if not movie_url:
-        return None
-    # proxy = get_random_proxy_url()
-    ua = UserAgent()
-    headers = {
-        'connection': 'close',
-        'User-Agent': ua.random
-    }
-    request = requests.get('{}{}'.format(proxy, movie_url), headers=headers, timeout=15)
-    return request.content
-
-
-def get_number_of_voices(movie_voices_counter_text):
-    words = movie_voices_counter_text.split(' ')
-    words = filter(lambda word: re.fullmatch('[0-9]*', word), words)
-    number = int(''.join(words))
-    return number
-
-
-def fetch_movie_data_frm_page(movie_page):
-    if not movie_page:
         return {
             'rating': 0,
             'voices_counter': 0
         }
-    movie_page_soup = BeautifulSoup(movie_page, 'html.parser')
-    movie_rating_text = movie_page_soup.find(attrs={'class': 'rating-button__rating'}).text
-    movie_voices_counter_text = movie_page_soup.find(attrs={'class': 'film-header__rating-comment'}).text
-    movie_data = {
-        'rating': float(movie_rating_text) if movie_rating_text else 0,
-        'voices_counter': get_number_of_voices(movie_voices_counter_text) if movie_rating_text else 0,
+    search_page_soup = BeautifulSoup(search_page, 'html.parser')
+    if search_page_soup.find(attrs={'class': 'search-empty'}):
+        return {
+            'rating': 0,
+            'voices_counter': 0
+        }
+    movie_average_rating = search_page_soup.find('span', class_='rating_ball').text
+    voters_counter = search_page_soup.find('span', class_='ratingCount').text
+    print(movie_average_rating, voters_counter)
+    return {
+        'rating': float(movie_average_rating),
+        'voters': int(get_voters_counter(voters_counter)),
     }
-    return movie_data
+
+
+def get_voters_counter(movie_voters_counter_text):
+    digits = list(s for s in movie_voters_counter_text.split() if s.isdigit())
+    return int(''.join(digits))
 
 
 def fetch_movie_info(movie_title):
-    # print('Fetching the {}'.format(movie_title))
     search_page = fetch_search_page(movie_title)
-    movie_url = fetch_movie_url(search_page)
-    movie_page = fetch_movie_page(movie_url)
-    return fetch_movie_data_frm_page(movie_page)
+    movie_data = fetch_movie_data(search_page)
+    return movie_data
 
 
-def fetch_rating_and_voice_counter(afisha_data_list):
+def fetch_rating_and_voters_counter(afisha_data_list):
     movie_titles = list(
         afisha_data['title'] for afisha_data in afisha_data_list
     )
-    pool = ThreadPoolExecutor(len(movie_titles))
-    kinop_data_list = list(pool.map(fetch_movie_info, movie_titles))
+    kinop_data_list = []
+    progress = 0
+    update_progress(float(progress))
+    for movie_title in movie_titles:
+        kinop_data_list.append(fetch_movie_info(movie_title))
+        time.sleep(TIMEOUT)
+        progress += 1
+        update_progress(progress/len(movie_titles))
     for afisha_data, kinop_data in zip(afisha_data_list, kinop_data_list):
         for key, value in zip(kinop_data.keys(), kinop_data.values()):
             afisha_data[key] = value
@@ -128,7 +123,7 @@ def output_movies_to_console(movie_data_list):
 
 
 def select_the_best_movies(movie_data_list):
-    pass
+    return sorted(movie_data_list, key=movie_data_list['rating'])[:TOP]
 
 
 if __name__ == '__main__':
@@ -137,9 +132,9 @@ if __name__ == '__main__':
     # print('Scraping the movie name list...')
     # movie_data_list = parse_afisha_list(raw_html)[:5]
     # print('Scraping the rating and voice counters...')
-    # fetch_rating_and_voice_counter(movie_data_list)
+    # fetch_rating_and_voters_counter(movie_data_list)
     # print('Analyzing the results...')
     # best_movies_list = select_the_best_movies(movie_data_list)
     # print('Printing the results...')
-    # output_movies_to_console(movie_data_list)
-    print(fetch_movie_info('Викинг'))
+    # output_movies_to_console(best_movies_list)
+    fetch_movie_info('Викинг 18+')
