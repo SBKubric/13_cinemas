@@ -36,7 +36,7 @@ def fetch_afisha_page():
     return afisha_page.content
 
 
-def remove_arthouse(movie_titles_list, cinemas_counters):
+def get_mainstream_list(movie_titles_list, cinemas_counters):
     no_arthouse = []
     for movie_title, counter in zip(movie_titles_list, cinemas_counters):
         if IS_ARTHOUSE_PARAMETER < counter:
@@ -60,8 +60,8 @@ def parse_afisha_list(raw_html):
     cinemas_counters = list(
         len(cinemas_schedule_soup.findChild('tbody')) for cinemas_schedule_soup in cinemas_schedule_soups
     )
-    no_arthouse = remove_arthouse(movie_titles_list, cinemas_counters)
-    return no_arthouse
+    mainstream_list = get_mainstream_list(movie_titles_list, cinemas_counters)
+    return mainstream_list
 
 
 def get_random_user_agent():
@@ -128,8 +128,6 @@ def parse_kinop_page(search_page):
     search_page_soup = BeautifulSoup(search_page, 'html.parser')
     average_rating_tag = search_page_soup.find('meta', attrs={'itemprop': 'ratingValue'})
     voters_counter_tag = search_page_soup.find('span', attrs={'class': 'ratingCount'})
-    if average_rating_tag is None and voters_counter_tag is None:
-        print('\n-----\n{}\n-----\n'.format(search_page_soup.prettify()))
     return {
         'rating': get_rating(average_rating_tag.get('content')) if average_rating_tag is not None else 0,
         'voters': get_voters_counter(voters_counter_tag.text) if voters_counter_tag is not None else 0,
