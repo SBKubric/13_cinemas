@@ -1,6 +1,6 @@
 import random
 import requests
-import sys
+from tqdm import tqdm
 from bs4 import BeautifulSoup
 
 IS_ARTHOUSE_PARAMETER = 15
@@ -9,26 +9,6 @@ SCHEDULE_URL = 'http://www.afisha.ru/msk/schedule_cinema/'
 KINOPOISK_URL = 'https://www.kinopoisk.ru/index.php'
 TIMEOUT = 10
 TOP = 10
-BAR_LENGTH = 40
-
-
-def update_progress(progress):
-    bar_length = BAR_LENGTH
-    status = ''
-    if isinstance(progress, int):
-        progress = float(progress)
-    if not isinstance(progress, float):
-        raise TypeError('progress value must be float!')
-    if progress < 0:
-        progress = 0
-        status = 'Halt...\r\n'
-    if progress >= 1:
-        progress = 1
-        status = 'Done!\r\n'
-    block = int(round(bar_length * progress))
-    text = '\rLoading: [{}] {:.2f}% {}'.format('#' * block + '-' * (bar_length - block), progress * 100, status)
-    sys.stdout.write(text)
-    sys.stdout.flush()
 
 
 def fetch_afisha_page():
@@ -149,28 +129,12 @@ def get_voters_counter(movie_voters_counter):
         return 0
 
 
-def fetch_movie_rating(movie_title):
-    kinop_html_raw = get_kinop_page(movie_title)
-    movie_rating_and_voters_counter = parse_kinop_page(kinop_html_raw)
-    return movie_rating_and_voters_counter
-
-
-def add_rating_and_voters_counter(afisha_data_list):
-    movie_titles = list(
-        afisha_data['title'] for afisha_data in afisha_data_list
-    )
-    kinop_data_list = []
-    progress = 0
-    update_progress(progress)
+def get_rating_and_voters_data(afisha_data_list):
+    movie_titles = [afisha_data['title'] for afisha_data in afisha_data_list]
     for movie_title in movie_titles:
-        kinop_data = fetch_movie_rating(movie_title)
-        progress += 1
-        update_progress(progress/len(movie_titles))
-        kinop_data_list.append(kinop_data)
-
-    for afisha_data, kinop_data in zip(afisha_data_list, kinop_data_list):
-        for key, value in zip(kinop_data.keys(), kinop_data.values()):
-            afisha_data[key] = value
+        kinop_html_raw = get_kinop_page(movie_title)
+        movie_rating_and_voters_counter = parse_kinop_page(kinop_html_raw)
+        yield movie_rating_and_voters_counter
 
 
 def output_movies_to_console(movie_data_list):
@@ -181,8 +145,8 @@ def output_movies_to_console(movie_data_list):
         print()
 
 
-def select_the_best_movies(movie_data_list):
-    return sorted(movie_data_list, key=lambda movie_data: movie_data['rating'], reverse=True)[:TOP]
+def select_the_best_movies(movie_data_list, top):
+    return sorted(movie_data_list, key=lambda movie_data: movie_data['rating'], reverse=True)[:top]
 
 
 if __name__ == '__main__':
@@ -191,8 +155,11 @@ if __name__ == '__main__':
     print('Scraping the movie name list...')
     movie_data_list = parse_afisha_list(raw_html)
     print('Scraping the rating and voice counters...')
-    add_rating_and_voters_counter(movie_data_list)
+    kinopoisk_data_list = get_rating_and_voters_data(movie_data_list)
+    for afisha_data, kinop_data in tqdm(zip(movie_data_list, kinopoisk_data_list), total=len(movie_data_list), unit='mov'):
+        for key, value in zip(kinop_data.keys(), kinop_data.values()):
+            afisha_data[key] = value
     print('Analyzing the results...')
-    best_movies_list = select_the_best_movies(movie_data_list)
+    best_movies_list = select_the_best_movies(movie_data_list, TOP)
     print('Printing the results...')
     output_movies_to_console(best_movies_list)
